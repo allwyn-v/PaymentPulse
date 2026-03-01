@@ -1,4 +1,4 @@
-# InsightX - Conversational AI for UPI Transaction Analysis
+# PaymentPulse - Conversational AI for UPI Transaction Analysis
 
 ![InsightX Banner](https://img.shields.io/badge/InsightX-AI%20Analytics-blue?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMTIgMkw2IDhIMTBWMTRINkwxMiAyMkwxOCAxNEgxNFY4SDE4TDEyIDJaIiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg==)
 
@@ -6,7 +6,7 @@ A premier hackathon project for **InsightX by Techfest, IIT Bombay** - Building 
 
 ## 🎯 Project Overview
 
-InsightX transforms complex UPI transaction data into actionable insights through natural language conversations. Business leaders can now query 250,000+ transactions without writing a single line of SQL!
+PaymentPulse transforms complex UPI transaction data into actionable insights through natural language conversations. Business leaders can now query 250,000+ transactions without writing a single line of SQL!
 
 ### Key Features
 
