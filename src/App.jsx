@@ -39,6 +39,8 @@ function App() {
   const [activeTab, setActiveTab] = useState('chat'); // 'chat', 'dashboard', 'transactions'
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [transactions, setTransactions] = useState([]);
+  const [trendData, setTrendData] = useState([]);
+  const [categoryData, setCategoryData] = useState([]);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -52,6 +54,7 @@ function App() {
   useEffect(() => {
     checkHealth();
     fetchStats();
+    fetchChartData();
     
     // Welcome message
     setMessages([{
@@ -77,6 +80,28 @@ function App() {
       setStats(response.data);
     } catch (error) {
       console.error('Failed to fetch stats:', error);
+    }
+  };
+
+  const fetchChartData = async () => {
+    try {
+      // Fetch trends data - use a query that will trigger peak_time analysis
+      const trendRes = await axios.post(`${API_BASE}/query`, {
+        query: "What are the peak transaction times?"
+      });
+      if (trendRes.data.response && trendRes.data.response.visualization) {
+        setTrendData(trendRes.data.response.visualization.data || []);
+      }
+      
+      // Fetch category distribution
+      const categoryRes = await axios.post(`${API_BASE}/query`, {
+        query: "Show me the distribution of transactions by category"
+      });
+      if (categoryRes.data.response && categoryRes.data.response.visualization) {
+        setCategoryData(categoryRes.data.response.visualization.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch chart data:', error);
     }
   };
 
@@ -254,17 +279,37 @@ function App() {
                 {/* Charts Section */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                    <h3 className="text-lg font-semibold mb-4">Transaction Trends</h3>
-                    <div className="h-64 flex items-center justify-center text-gray-400">
-                      <p>Chart visualization goes here</p>
-                    </div>
+                    <h3 className="text-lg font-semibold mb-4 text-blue-300">Transaction Trends</h3>
+                    {trendData && trendData.length > 0 ? (
+                      <Visualization data={{
+                        type: 'bar',
+                        data: trendData,
+                        xKey: 'hour_of_day',
+                        yKey: 'count',
+                        title: 'Transaction Volume by Hour'
+                      }} />
+                    ) : (
+                      <div className="h-64 flex items-center justify-center text-gray-400">
+                        <p>Loading transaction trends...</p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                    <h3 className="text-lg font-semibold mb-4">Category Distribution</h3>
-                    <div className="h-64 flex items-center justify-center text-gray-400">
-                      <p>Chart visualization goes here</p>
-                    </div>
+                    <h3 className="text-lg font-semibold mb-4 text-blue-300">Category Distribution</h3>
+                    {categoryData && categoryData.length > 0 ? (
+                      <Visualization data={{
+                        type: 'pie',
+                        data: categoryData,
+                        xKey: 'merchant_category',
+                        yKey: 'count',
+                        title: 'Category Distribution'
+                      }} />
+                    ) : (
+                      <div className="h-64 flex items-center justify-center text-gray-400">
+                        <p>Loading category distribution...</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 

@@ -18,24 +18,26 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# Try to import OpenAI
-OPENAI_AVAILABLE = False
-openai_client = None
+# Try to import Gemini
+GEMINI_AVAILABLE = False
+gemini_client = None
 try:
-    from openai import OpenAI
-    api_key = os.getenv('OPENAI_API_KEY', '').strip()
-    if api_key and api_key != 'your_openai_api_key_here':
+    import google.generativeai as genai
+    gemini_api_key = os.getenv('GEMINI_API_KEY', '').strip()
+    if gemini_api_key and gemini_api_key != 'your-gemini-api-key-here':
         try:
-            openai_client = OpenAI(api_key=api_key)
-            OPENAI_AVAILABLE = True
-            print("✓ OpenAI API enabled")
+            genai.configure(api_key=gemini_api_key)
+            gemini_client = genai.GenerativeModel('gemini-2.0-flash')
+            GEMINI_AVAILABLE = True
+            print("✓ Gemini API enabled")
         except Exception as e:
-            print(f"ℹ OpenAI initialization failed: {str(e)}")
+            print(f"ℹ Gemini initialization failed: {str(e)}")
             print("ℹ Using rule-based NLP instead")
     else:
-        print("ℹ OpenAI API key not configured - using rule-based NLP")
+        print("ℹ Gemini API key not configured - using rule-based NLP")
 except ImportError:
-    print("ℹ OpenAI library not installed - using rule-based NLP")
+    print("ℹ Gemini library not installed - using rule-based NLP")
+
 
 # Load transaction data
 df = None
@@ -74,14 +76,14 @@ class QueryAnalyzer:
         """Main query analysis pipeline"""
         query_lower = query.lower()
         
-        # Try OpenAI first if available
-        if OPENAI_AVAILABLE and openai_client:
+        # Try Gemini if available
+        if GEMINI_AVAILABLE and gemini_client:
             try:
-                response = self._analyze_with_openai(query, conversation_history)
+                response = self._analyze_with_gemini(query, conversation_history)
                 if response:
                     return self._convert_types(response)
             except Exception as e:
-                print(f"OpenAI error: {e}, falling back to rule-based")
+                print(f"Gemini error: {e}, falling back to rule-based")
         
         # Fallback to rule-based NLP
         intent = self._classify_intent(query_lower)
@@ -90,8 +92,8 @@ class QueryAnalyzer:
         
         return self._convert_types(response)
     
-    def _analyze_with_openai(self, query, conversation_history):
-        """Use OpenAI to understand query and generate SQL-like filters"""
+    def _analyze_with_gemini(self, query, conversation_history):
+        """Use Gemini to understand query and generate analysis"""
         
         # Get dataset schema with real-time stats
         total_records = len(self.df)
@@ -114,48 +116,62 @@ AVAILABLE VALUES:
 - Fraud Flag: 0 (normal), 1 (flagged)
 """
         
-        # Build conversation context
-        context_messages = []
-        if conversation_history:
-            for msg in conversation_history[-3:]:  # Last 3 messages for context
-                role = "user" if msg.get('type') == 'user' else "assistant"
-                context_messages.append({
-                    "role": role,
-                    "content": msg.get('content', '')[:200]  # Limit length
-                })
-        
-        # Enhanced system prompt
-        system_prompt = f"""You are an expert AI data analyst specializing in UPI (Unified Payments Interface) transaction analysis for InsightX.
+        # Enhanced system prompt for Gemini
+        system_prompt = f"""You are an advanced AI data analyst for PaymentPulse UPI transaction analytics.
 
 BUSINESS CONTEXT:
 - UPI is India's real-time digital payment system
 - Transactions occur 24/7 across multiple merchant categories
 - Key business metrics: transaction success rate, fraud detection, peak usage times, category trends
-- Important segments: device type (Android/iOS/Web), network quality (5G/4G/WiFi), geographic location
+- Important segments: device type (Android/iOS/Web), network quality (5G/4G/WiFi), geographic location, states
 
 {schema_info}
 
 YOUR TASK:
-1. Understand the user's business question (consider Indian business context)
-2. Identify the analysis type needed
-3. Extract relevant filters and segments
+1. INFER INTENT from even vague queries - don't default to "general" too easily
+2. Extract dimension from context clues
+3. Make reasonable assumptions about what user wants
 4. Return ONLY a valid JSON response (no markdown, no explanations)
 
 ANALYSIS TYPES:
 - average: Calculate mean transaction amounts
-- count: Count number of transactions
+- count: Count number of transactions  
 - total: Sum of transaction amounts
 - comparison: Compare two segments (e.g., iOS vs Android, 5G vs WiFi)
 - peak_time: Identify busiest hours/days
 - fraud: Analyze fraud-flagged transactions
 - failure_rate: Calculate transaction failure rates
 - distribution: Show breakdown across categories/segments
-- top: Find top performers (categories, states, etc.)
-- general: Overview when intent is unclear
+- top: Find top performers by dimension (categories, states, devices, etc.)
+- general: ONLY use this if query is completely generic (like "tell me about transactions", "overview", "summary")
+
+INFERENCE RULES:
+1. "highest", "best", "top" → intent: top
+2. "average", "mean", "typical" → intent: average
+3. "total", "sum", "altogether" → intent: total
+4. "how many", "count", "number" → intent: count
+5. "when", "time", "hour", "day" → intent: peak_time
+6. "compare", "vs", "versus", "difference" → intent: comparison
+7. "fail", "error", "unsuccessful" → intent: failure_rate
+8. "fraud", "suspicious", "flagged" → intent: fraud
+9. "breakdown", "split", "spread" → intent: distribution
+10. "states", "regions", "geography" mentioned → dimension: state
+11. "android", "ios", "phones" mentioned → dimension: device
+12. "5g", "4g", "wifi", "network" mentioned → dimension: network
+13. "categories", "merchants", "food", "shopping" mentioned → dimension: category
+
+EXAMPLES:
+- "Tell me about Food" → intent: distribution, dimension: category
+- "Anything about states?" → intent: top, dimension: state
+- "How's Android doing?" → intent: comparison OR distribution, dimension: device
+- "What's highest?" → intent: top (guess dimension based on context, default: category)
+- "Give me insights" → intent: general (truly generic)
+- "Show me differences" → intent: comparison
 
 RESPONSE FORMAT (JSON only):
 {{
     "intent": "average|count|total|comparison|peak_time|fraud|failure_rate|distribution|top|general",
+    "dimension": "category|state|device|network|none",
     "entities": {{
         "category": "Food|Entertainment|Grocery|Fuel|Shopping|Utilities|Transport|Healthcare|Other",
         "device": "Android|iOS|Web",
@@ -166,59 +182,77 @@ RESPONSE FORMAT (JSON only):
     "confidence": 0.95
 }}
 
-IMPORTANT:
-- Only include entities explicitly mentioned in the query
-- Use exact values from AVAILABLE VALUES above
+IMPORTANT INSTRUCTIONS:
+- ACTIVELY INFER intent - use the INFERENCE RULES above
+- Only use intent: "general" if query is TRULY vague with NO context clues
+- For ambiguous dimension, prefer: category > state > device > network
+- If user says "highest" without context, assume they want to see what's highest (top intent)
+- Context matters - "Food" alone means distribution analysis of Food category
+- Be confident in reasonable inferences - don't bail to "general" too easily
 - Return valid JSON only (no extra text)
-- If unsure, use intent: "general"
 """
 
         try:
-            # Call OpenAI API with optimized settings
-            response = openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",  # Cost-effective choice
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    *context_messages,  # Include conversation history
-                    {"role": "user", "content": query}
-                ],
-                temperature=0.2,  # Low temp for consistent, focused responses
-                max_tokens=400,   # Reduced from 500 for cost optimization
-                response_format={"type": "json_object"}  # Force JSON output
+            # Build conversation context
+            conversation = []
+            if conversation_history:
+                for msg in conversation_history[-3:]:  # Last 3 messages
+                    role = "user" if msg.get('type') == 'user' else "model"
+                    conversation.append({
+                        "role": role,
+                        "parts": [{"text": msg.get('content', '')[:200]}]
+                    })
+            
+            # Add current query
+            conversation.append({
+                "role": "user",
+                "parts": [{"text": query}]
+            })
+            
+            # Call Gemini API
+            response = gemini_client.generate_content(
+                contents=conversation,
+                generation_config={
+                    "temperature": 0.2,
+                    "top_p": 0.95,
+                    "top_k": 64,
+                    "max_output_tokens": 500,
+                }
             )
             
-            ai_response = response.choices[0].message.content
+            ai_response = response.text
             
-            # Log token usage for monitoring
-            usage = response.usage
-            print(f"GPT tokens: {usage.prompt_tokens} prompt + {usage.completion_tokens} completion = {usage.total_tokens} total")
-            
+            # Parse JSON response
             try:
-                # Parse JSON response
+                import json as json_lib
+                # Extract JSON from response
                 json_start = ai_response.find('{')
                 json_end = ai_response.rfind('}') + 1
                 if json_start >= 0 and json_end > json_start:
-                    parsed = json.loads(ai_response[json_start:json_end])
-                    
+                    parsed = json_lib.loads(ai_response[json_start:json_end])
                     intent = parsed.get('intent', 'general')
                     entities = parsed.get('entities', {})
-                    confidence = parsed.get('confidence', 0.8)
+                    dimension = parsed.get('dimension', 'category')
                     
-                    # Log for debugging
-                    print(f"GPT Analysis - Intent: {intent}, Entities: {entities}, Confidence: {confidence}")
+                    if not intent:
+                        intent = 'general'
                     
-                    # Generate response using analytics engine
+                    # Add dimension to entities for dynamic analysis
+                    if dimension and dimension != 'none':
+                        entities['dimension'] = dimension
+                    
+                    # Generate response based on parsed intent
                     return self._generate_response(intent, entities, query.lower())
                 else:
-                    print("GPT returned invalid JSON format")
+                    print(f"Failed to extract JSON from Gemini response: {ai_response}")
                     return None
                     
-            except json.JSONDecodeError as e:
-                print(f"JSON parsing error: {e}")
+            except json_lib.JSONDecodeError as e:
+                print(f"Failed to parse Gemini response: {ai_response}")
                 return None
                 
         except Exception as e:
-            print(f"OpenAI API error: {e}")
+            print(f"Gemini API error: {e}")
             return None
     
     def _classify_intent(self, query):
@@ -291,6 +325,12 @@ IMPORTANT:
         elif any(word in query for word in ['fail', 'failure', 'failed']):
             entities['status'] = 'FAILURE'
         
+        # States - check if query mentions states
+        if any(word in query for word in ['state', 'states', 'state-wise', 'statewise']):
+            entities['dimension'] = 'state'
+        elif any(word in query for word in ['device', 'devices']):
+            entities['dimension'] = 'device'
+        
         return entities
     
     def _generate_response(self, intent, entities, query):
@@ -324,7 +364,7 @@ IMPORTANT:
             elif intent == 'distribution':
                 return self._analyze_distribution(filtered_df)
             elif intent == 'top':
-                return self._analyze_top(filtered_df)
+                return self._analyze_top(filtered_df, entities)
             else:
                 return self._general_analysis(filtered_df)
                 
@@ -510,29 +550,88 @@ IMPORTANT:
             }
         }
     
-    def _analyze_top(self, df):
-        """Analyze top performers"""
-        top = df.groupby('merchant_category').agg({
-            'transaction id': 'count',
-            'amount (INR)': 'sum'
-        }).reset_index().sort_values('amount (INR)', ascending=False).head(10)
-        top.columns = ['category', 'transactions', 'total_amount']
+    def _analyze_top(self, df, entities=None):
+        """Analyze top performers by category, state, or device"""
+        if entities is None:
+            entities = {}
         
-        answer = f"🏆 **Top Categories**\n\n"
-        for i, row in top.iterrows():
-            answer += f"{i+1}. {row['category']}: ₹{row['total_amount']:,.0f}\n"
+        dimension = entities.get('dimension', 'category')
         
-        return {
-            'answer': answer,
-            'data': {'top': top.to_dict('records')},
-            'visualization': {
-                'type': 'bar',
-                'data': top.to_dict('records'),
-                'xKey': 'category',
-                'yKey': 'total_amount',
-                'title': 'Top Categories by Revenue'
+        if dimension == 'state':
+            # Analyze by state
+            if 'sender_state' in df.columns:
+                top = df.groupby('sender_state').agg({
+                    'transaction id': 'count',
+                    'amount (INR)': 'sum'
+                }).reset_index().sort_values('amount (INR)', ascending=False).head(10)
+                top.columns = ['state', 'transactions', 'total_amount']
+                top['rank'] = range(1, len(top) + 1)
+                
+                answer = f"🏆 **Top 10 States by Transaction Volume**\n\n"
+                for _, row in top.iterrows():
+                    answer += f"{int(row['rank'])}. {row['state']}: ₹{row['total_amount']:,.0f} ({int(row['transactions'])} transactions)\n"
+                
+                return {
+                    'answer': answer,
+                    'data': {'top': top.to_dict('records')},
+                    'visualization': {
+                        'type': 'bar',
+                        'data': top.to_dict('records'),
+                        'xKey': 'state',
+                        'yKey': 'total_amount',
+                        'title': 'Top States by Transaction Volume'
+                    }
+                }
+        
+        elif dimension == 'device':
+            # Analyze by device
+            top = df.groupby('device_type').agg({
+                'transaction id': 'count',
+                'amount (INR)': 'sum'
+            }).reset_index().sort_values('amount (INR)', ascending=False).head(10)
+            top.columns = ['device', 'transactions', 'total_amount']
+            top['rank'] = range(1, len(top) + 1)
+            
+            answer = f"📱 **Top Devices by Transaction Volume**\n\n"
+            for _, row in top.iterrows():
+                answer += f"{int(row['rank'])}. {row['device']}: ₹{row['total_amount']:,.0f} ({int(row['transactions'])} transactions)\n"
+            
+            return {
+                'answer': answer,
+                'data': {'top': top.to_dict('records')},
+                'visualization': {
+                    'type': 'bar',
+                    'data': top.to_dict('records'),
+                    'xKey': 'device',
+                    'yKey': 'total_amount',
+                    'title': 'Top Devices by Transaction Volume'
+                }
             }
-        }
+        
+        else:
+            # Default: Analyze by category
+            top = df.groupby('merchant_category').agg({
+                'transaction id': 'count',
+                'amount (INR)': 'sum'
+            }).reset_index().sort_values('amount (INR)', ascending=False).head(10)
+            top.columns = ['category', 'transactions', 'total_amount']
+            top['rank'] = range(1, len(top) + 1)
+            
+            answer = f"🏆 **Top Categories by Transaction Volume**\n\n"
+            for _, row in top.iterrows():
+                answer += f"{int(row['rank'])}. {row['category']}: ₹{row['total_amount']:,.0f} ({int(row['transactions'])} transactions)\n"
+            
+            return {
+                'answer': answer,
+                'data': {'top': top.to_dict('records')},
+                'visualization': {
+                    'type': 'bar',
+                    'data': top.to_dict('records'),
+                    'xKey': 'category',
+                    'yKey': 'total_amount',
+                    'title': 'Top Categories by Transaction Volume'
+                }
+            }
     
     def _general_analysis(self, df):
         """General overview"""
